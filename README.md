@@ -25,7 +25,10 @@ So use the scores as a starting point, not a verdict.
 
 ### Option 1: One-liner (Linux / macOS)
 
+> Run these commands from the directory where you want JobRadar installed (it will be created there).
+
 ```bash
+mkdir -p ~/jobradar && cd ~/jobradar
 curl -fsSL https://raw.githubusercontent.com/ANIRudH-lab-life/job-radar/main/setup.sh | bash
 ```
 
