@@ -5,7 +5,24 @@
 # ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve SCRIPT_DIR robustly — works both when run as a file and when piped
+# via `curl ... | bash` (where BASH_SOURCE may be unset).
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+    # Piped execution: use current dir if it looks like the repo, else clone.
+    if [ -f "./requirements.txt" ] && [ -f "./setup.sh" ]; then
+        SCRIPT_DIR="$(pwd)"
+    else
+        INSTALL_DIR="${HOME}/job-radar"
+        if [ ! -d "$INSTALL_DIR/.git" ]; then
+            echo "  Cloning JobRadar into $INSTALL_DIR ..."
+            git clone https://github.com/ANIRudH-lab-life/job-radar.git "$INSTALL_DIR"
+        fi
+        cd "$INSTALL_DIR"
+        SCRIPT_DIR="$INSTALL_DIR"
+    fi
+fi
 VENV_DIR="$SCRIPT_DIR/.venv"
 BIN_DIR="$SCRIPT_DIR/bin"
 MODEL_DIR="$SCRIPT_DIR/models"
@@ -44,20 +61,38 @@ fi
 
 # ── Step 2: Python venv + pip packages ──────────────────────────────────────
 info "── Step 2/5: Python packages ──"
+# Recreate venv if it exists but is incomplete (missing activate/pip/python)
+if [ -d "$VENV_DIR" ] && [ ! -f "$VENV_DIR/bin/activate" -o ! -x "$VENV_DIR/bin/python" ]; then
+    warn "Existing virtual environment is incomplete — recreating..."
+    rm -rf "$VENV_DIR"
+fi
+
 if [ -d "$VENV_DIR" ]; then
     skip "Virtual environment at $VENV_DIR"
 else
     info "  Creating virtual environment..."
     python3 -m venv "$VENV_DIR"
+    # Ensure pip is available (some systems ship venv without pip)
+    if [ ! -x "$VENV_DIR/bin/pip" ]; then
+        "$VENV_DIR/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
+    fi
     ok "Virtual environment created"
 fi
 
-source "$VENV_DIR/bin/activate"
+# Activate if possible; otherwise use the venv interpreter directly
+if [ -f "$VENV_DIR/bin/activate" ]; then
+    # shellcheck source=/dev/null
+    source "$VENV_DIR/bin/activate"
+fi
+VENV_PYTHON="$VENV_DIR/bin/python"
+if [ ! -x "$VENV_PYTHON" ]; then
+    VENV_PYTHON="python3"
+fi
 
 # Check if packages are installed
 MISSING_PIPS=()
 for pkg in rich yaml requests bs4 pytest; do
-    if ! python3 -c "import $pkg" &>/dev/null 2>&1; then
+    if ! "$VENV_PYTHON" -c "import $pkg" &>/dev/null 2>&1; then
         MISSING_PIPS+=("$pkg")
     fi
 done
@@ -66,14 +101,14 @@ if [ ${#MISSING_PIPS[@]} -eq 0 ]; then
     skip "Core Python packages already installed"
 else
     info "  Installing ${#MISSING_PIPS[@]} missing package(s)..."
-    pip install -q -r "$SCRIPT_DIR/requirements.txt"
+    "$VENV_PYTHON" -m pip install -q -r "$SCRIPT_DIR/requirements.txt"
     ok "Core packages installed"
 fi
 
 # Dashboard packages
 MISSING_DASH=()
 for pkg in fastapi uvicorn pydantic; do
-    if ! python3 -c "import $pkg" &>/dev/null 2>&1; then
+    if ! "$VENV_PYTHON" -c "import $pkg" &>/dev/null 2>&1; then
         MISSING_DASH+=("$pkg")
     fi
 done
@@ -82,7 +117,7 @@ if [ ${#MISSING_DASH[@]} -eq 0 ]; then
     skip "Dashboard packages already installed"
 else
     info "  Installing ${#MISSING_DASH[@]} missing dashboard package(s)..."
-    pip install -q -r "$SCRIPT_DIR/dashboard/requirements.txt"
+    "$VENV_PYTHON" -m pip install -q -r "$SCRIPT_DIR/dashboard/requirements.txt"
     ok "Dashboard packages installed"
 fi
 
@@ -101,7 +136,12 @@ echo ""
 
 LLM_CHOICE=""
 while [ "$LLM_CHOICE" != "1" ] && [ "$LLM_CHOICE" != "2" ]; do
-    read -r -p "  Enter 1 or 2 [1]: " LLM_CHOICE || LLM_CHOICE="1"
+    if [ -t 0 ]; then
+        read -r -p "  Enter 1 or 2 [1]: " LLM_CHOICE || LLM_CHOICE="1"
+    else
+        # Non-interactive (piped) run: default to Ollama
+        LLM_CHOICE="1"
+    fi
     if [ -z "$LLM_CHOICE" ]; then LLM_CHOICE="1"; fi
     if [ "$LLM_CHOICE" != "1" ] && [ "$LLM_CHOICE" != "2" ]; then
         warn "Please enter 1 or 2"
