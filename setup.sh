@@ -14,12 +14,13 @@ else
     if [ -f "./requirements.txt" ] && [ -f "./setup.sh" ]; then
         SCRIPT_DIR="$(pwd)"
     else
-        INSTALL_DIR="${HOME}/job-radar"
-        if [ ! -d "$INSTALL_DIR/.git" ]; then
-            echo "  Cloning JobRadar into $INSTALL_DIR ..."
-            git clone https://github.com/ANIRudH-lab-life/job-radar.git "$INSTALL_DIR"
-        fi
-        cd "$INSTALL_DIR"
+        # Materialize the repo into the current directory so setup runs here.
+        INSTALL_DIR="$(pwd)"
+        echo "  Cloning JobRadar into $INSTALL_DIR ..."
+        TMP_CLONE=$(mktemp -d)
+        git clone https://github.com/ANIRudH-lab-life/job-radar.git "$TMP_CLONE/repo"
+        cp -a "$TMP_CLONE/repo/." "$INSTALL_DIR/"
+        rm -rf "$TMP_CLONE"
         SCRIPT_DIR="$INSTALL_DIR"
     fi
 fi
